@@ -24,4 +24,9 @@ def create_app(config_name):
     cors.init_app(app, origins=["http://localhost:3000"])
     
     
+    from app.api_v1 import api 
+    
+    app.register_blueprint(api)
+    
+    
     return app 
