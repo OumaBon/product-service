@@ -17,6 +17,7 @@ class Category(db.Model):
     __tablename__="categories"
     id = db.Column(db.String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String, nullable=False, index=True, unique=True)
+    slug = db.Column(db.String, nullable=False, index=True, unique=True)
     parent_id = db.Column(db.String, db.ForeignKey('categories.id'), nullable=False)
     
     parent = db.relationship("Category", remote_side=[id], back_populates='subcategories')
