@@ -10,25 +10,23 @@ from .. import db
 
 
 @api.route('/product', methods=["POST"])
-def add_product():
-    data = request.get_json()
-    
-    if not data:
-        return jsonify({"error": "No input data provided"}), 400
-    
-    schema = ProductSchema()
-    
+def new_product():
     try:
+        data = request.get_json()
+        schema = ProductSchema()
         product = schema.load(data, session=db.session)
+        db.session.add(product)
+        db.session.commit()
+        
+        return jsonify({schema.dump(product)}),201
+    
     except ValidationError as err:
-        return jsonify(err.messages), 422
+        return jsonify({"errors": err.messages}), 400
     
-    db.session.add(product)
-    db.session.commit()
-    result = schema.dump(product)
-    return jsonify({"error": result}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     
-
+     
 
 @api.route('/product', methods=["GET"])
 def get_products():
