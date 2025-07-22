@@ -19,9 +19,14 @@ class Category(db.Model):
     name = db.Column(db.String, nullable=False, index=True, unique=True)
     parent_id = db.Column(db.String, db.ForeignKey('categories.id'), nullable=False)
     
-    parent = db.relationship("Category", remote_side=[id], backref='subcategories')
+    parent = db.relationship("Category", remote_side=[id], back_populates='subcategories')
     subcategories = db.relationship('Category', back_populates='parent', cascade="all, delete")
     products = db.relationship('Product', back_populates='category')
+    
+    
+    
+    
+    
     
 
 class Product(db.Model):
@@ -52,7 +57,7 @@ class ProductVariant(db.Model):
     stock = db.Column(db.Integer, nullable=False)
     price_override=db.Column(db.Numeric(10, 2),  nullable=True)
     
-    product = db.relationship('Product', backref='variants')
+    product = db.relationship('Product', back_populates='variants')
     
 
 class ProductImage(db.Model):
