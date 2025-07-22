@@ -13,7 +13,7 @@ class Config:
     SECRET_KEY=os.environ.get('SECRET_KEY') or "somethingveryhard"
     
     @staticmethod
-    def init_app(self, app):
+    def init_app(app):
         pass
 
 
