@@ -6,13 +6,18 @@ from ..product_service import ProductService
 from . import api 
 
 
+
 @api.route('/product', methods=["POST"])
 def new_product():
     data = request.get_json()
-    product, error = ProductService.create_product(data)
+
+    product, error, status_code = ProductService.create_product(data)
+
     if error:
-        return jsonify({"error": "Server error", "message": error}), 500
-    return jsonify(product), 201
+        return jsonify(error), status_code
+
+    return jsonify(product), status_code
+
 
 @api.route('/product', methods=['GET'])
 def get_products():
