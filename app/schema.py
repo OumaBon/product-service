@@ -1,81 +1,86 @@
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema, auto_field
-from marshmallow import fields, validate, validates,ValidationError
+from marshmallow import fields, validate, validates, ValidationError
+from .model import Product, ProductImage, Brand, Category, ProductVariant
+from . import db
 
-from .model import Product,ProductImage,Brand, Category, ProductVariant
 
+
+# Helper for avoiding circular imports
+def lazy_nested(field_name, **kwargs):
+    return fields.Nested(lambda: globals()[field_name], **kwargs)
+
+# --------------------------
+# Non-circular schemas first
+# --------------------------
 
 class BrandSchema(SQLAlchemyAutoSchema):
     class Meta:
-        model=Brand
-        load_instance =True
-        include_fk = True
-        
-    name = auto_field(required=True, validate=validate.Length(min=12, max=100))
-    description = auto_field(required=True, validate=validate.Length(min=12))
-    products = fields.List(fields.Nested(lambda: ProductSchema(only=("id", "name", "slug"))))   
-    
-    
+        model = Brand
+        load_instance = True
+        sqla_session = db.session 
+        exclude = ("products",)  # Avoid circular reference
+
+    name = auto_field(required=True, validate=validate.Length(max=100))
+    description = auto_field(validate=validate.Length(max=500))  # Now nullable=True in model
+
+
 class CategorySchema(SQLAlchemyAutoSchema):
     class Meta:
         model = Category
         load_instance = True
-        include_fk = True
-    name = auto_field(required=True, validate=validate.Length(min=12))
-    parent = fields.Nested(lambda: CategorySchema(exclude=("subcategories",)))
-    subcategories = fields.List(fields.Nested(lambda: CategorySchema(exclude=("parent",))))
-    products = fields.List(fields.Nested(lambda: ProductSchema(only=("id", "name", "slug"))))
+        sqla_session = db.session 
+        exclude = ("products", "subcategories")  # Avoid circular references
+
+    name = auto_field(required=True, validate=validate.Length(max=100))
+    slug = auto_field(required=True, validate=validate.Length(max=100))
+    parent_id = auto_field(required=False)  # Now nullable=True in model
 
 
-class ProductSchema(SQLAlchemyAutoSchema):
+class ProductVariantSchema(SQLAlchemyAutoSchema):
     class Meta:
-        model = Product 
+        model = ProductVariant
         load_instance = True
-        include_fk = True
-    
-    name = auto_field(required=True, validate=validate.Length(min=6, max=100))
-    slug=auto_field(required=True, validate=validate.Length(min=4, max=100))
-    description=auto_field(required=True,validate=validate.Length(min=4, max=256))
-    price = auto_field(required=True, validate=validate.Range(min=0))
-    
-    category = fields.Nested(CategorySchema(only=("id", "name")))
-    brand = fields.Nested(BrandSchema(only=("id", "name")))
-    variants = fields.List(fields.Nested(lambda: ProductVariantSchema(exclude=('product',))))
-    images = fields.List(fields.Nested(lambda: ProductImageSchema(exclude=("product",))))
+        sqla_session = db.session 
+        exclude = ("product",)  # Avoid circular reference
 
-
-@validates('brand_id')
-def validate_brand_id(self, value):
-    if not Brand.query.get(value):
-        raise ValidationError("Brand does not exist.")
-
-@validates('category_id')
-def validate_category_id(self, value):
-    if not Category.query.get(value):
-        raise ValidationError("Category does not exist.")    
-
+    sku = auto_field(required=True, validate=validate.Length(max=50))
+    color = auto_field(validate=validate.Length(max=50))
+    size = auto_field(validate=validate.Length(max=20))
+    stock = auto_field(required=True)
+    price_override = auto_field()  # Nullable
 
 
 class ProductImageSchema(SQLAlchemyAutoSchema):
     class Meta:
         model = ProductImage
         load_instance = True
-        include_fk = True
-    image_url = auto_field(required=True, validate=validate.Length(max=256))
-    alt_text =auto_field(required=True, validate=validate.Length(min=10, max=256))
-    product = fields.Nested(ProductSchema(only=("id", "name", "slug")))
-    
-    
-class ProductVariantSchema(SQLAlchemyAutoSchema):
+        sqla_session = db.session 
+        exclude = ("product",)  # Avoid circular reference
+
+    image_url = auto_field(required=True)
+    alt_text = auto_field(validate=validate.Length(max=100))  # Nullable
+
+
+# --------------------------
+# Now define ProductSchema (depends on others)
+# --------------------------
+
+class ProductSchema(SQLAlchemyAutoSchema):
     class Meta:
-        model = ProductVariant
+        model = Product
         load_instance = True
-        include_fk = True
-    sku = auto_field(required=True,validate=validate.Length(min=2,max=100))
-    color =auto_field(required=True, validate=validate.Length(min=1, max=50))
-    size = auto_field(required=True, validate=validate.Length(min=1, max=50))
-    stock = auto_field(required=True, validate=validate.Range(min=0))
-    price_override =auto_field(required=False)
-    product=fields.Nested(ProductSchema(only=("id","name", "slug")))
+        sqla_session = db.session 
+        include_fk = True  # Include foreign keys (brand_id, category_id)
 
+    name = auto_field(required=True, validate=validate.Length(max=100))
+    slug = auto_field(required=True, validate=validate.Length(max=100))
+    description = auto_field(required=True)
+    price = auto_field(required=True)
+    category_id = auto_field(required=False)  # Nullable
+    brand_id = auto_field(required=False)  # Nullable
 
-
+    # Nested relationships (avoid circular references)
+    brand = fields.Nested(BrandSchema, required=False)
+    category = fields.Nested(CategorySchema, required=False)
+    variants = fields.List(fields.Nested(ProductVariantSchema), required=False)
+    images = fields.List(fields.Nested(ProductImageSchema), required=False)
