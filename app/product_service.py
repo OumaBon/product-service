@@ -1,337 +1,287 @@
-from uuid import uuid4
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime
-from flask import current_app
-
-from .model import Product, ProductVariant,ProductImage
+from sqlalchemy.exc import SQLAlchemyError,IntegrityError
+from sqlalchemy import or_, func, and_
+from .model import Product, Category, Brand, ProductVariant, db
 from .schema import ProductSchema
-from . import db
 
 
 class ProductService:
     @staticmethod
-    def create_product(data):
-        """Create a new product with variants and images.
-
-        Args:
-            data (dict): Product data including variants and images if available
-
-        Returns:
-            tuple: (product_data, error) where product_data is the created product data 
-                   or None if error occurred, and error is None or a dictionary with error details
+    def _paginate_query(query, page=None, per_page=None):
         """
+        Internal helper for query pagination
+        Args:
+            query: SQLAlchemy query object
+            page: Page number (1-based)
+            per_page: Items per page
+        Returns:
+            Dictionary with paginated results and metadata
+        """
+        if page and per_page:
+            paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+            return {
+                "items": paginated.items,
+                "total": paginated.total,
+                "page": paginated.page,
+                "per_page": paginated.per_page
+            }
+        return {
+            "items": query.all(),
+            "total": query.count(),
+            "page": 1,
+            "per_page": None
+        }
+
+    @staticmethod
+    def get_all_products(page=None, per_page=None):
+        """Get products with optional pagination"""
+        try:
+            query = Product.query
+            result = ProductService._paginate_query(query, page, per_page)
+            return {
+                "products": ProductSchema(many=True).dump(result["items"]),
+                "pagination": {
+                    "total": result["total"],
+                    "page": result["page"],
+                    "per_page": result["per_page"]
+                }
+            }, None
+                
+        except SQLAlchemyError as e:
+            return None, {
+                "error": "Database error",
+                "message": str(e)
+            } 
+    
+    @staticmethod
+    def create_product(product_data):
+        """Create a new product"""
         try:
             schema = ProductSchema()
-            product_data = schema.load(data)
+            product = schema.load(product_data, session=db.session)
             
-            product = Product(
-                id=str(uuid4()),
-                name=product_data['name'],
-                slug=product_data['slug'],
-                description=product_data['description'],
-                price=product_data['price'],
-                category_id=product_data.get('category_id'),
-                brand_id=product_data.get('brand_id')
-            )
-            
-            if 'variants' in product_data:
-                for variant_data in product_data['variants']:
-                    variant = ProductVariant(
-                        id=str(uuid4()),
-                        sku=variant_data['sku'],
-                        color=variant_data.get('color'),
-                        size=variant_data.get('size'),
-                        stock=variant_data['stock'],
-                        price_override=variant_data.get('price_override'),
-                    )
-                    product.variants.append(variant)
-            
-            if "images" in product_data:
-                for image_data in product_data['images']:
-                    image = ProductImage(
-                        id=str(uuid4()),
-                        image_url=image_data['image_url'],
-                        alt_text=image_data.get('alt_text')
-                    )
-                    product.images.append(image)
-           
             db.session.add(product)
             db.session.commit()
+            
             return schema.dump(product), None
+        
         except IntegrityError as e:
             db.session.rollback()
-            current_app.logger.error(f"Integrity error creating product: {str(e)}")
-            return None, {
-                "error": "Database integrity error",
-                "details": "Possible duplicate slug, SKU, or invalid reference"
-            }
+            if "UNIQUE constraint failed: categories.slug" in str(e):
+                return None, "A category with this slug already exists. Please choose a different slug."
+            return None, "Database integrity error occurred. This may be due to duplicate data."
+        
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            return None, f"Database error: {str(e)}"
+        
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error creating product: {str(e)}")
-            return None, {
-                'error': 'Failed to create product',
-                'details': str(e)
-            }
-    
-    
+            return None, f"Unexpected error: {str(e)}"
+        
     @staticmethod
     def get_product_by_id(product_id):
-        """_summary_
-
-        Args:
-            product_id (_type_): _description_
-        """
-        
+        """Get a single product by ID"""
         try:
-            product = db.session.get(Product, product_id)
+            product = Product.query.get(product_id)
             if not product:
-                return None, {'error': 'Product not found'}
-            
-            schema = ProductSchema()
-            return schema.dump(product), None
-        except Exception as e:
-            current_app.logger.error(f'Error fetching product {product_id}: {str(e)}')
-            return None, {
-                'error': 'Failed to fetch product',
-                'details': str(e)
-            }
-    
+                return None, "Product not found"
+            return ProductSchema().dump(product), None
+        except SQLAlchemyError as e:
+            return None, str(e)
+
     @staticmethod
-    def get_products(page=1, per_page=20):
-        """_summary_
-
-        Args:
-            page (int, optional): _description_. Defaults to 1.
-            per_page (int, optional): _description_. Defaults to 20.
-        """
-        
+    def update_product(product_id, update_data):
+        """Update an existing product"""
         try:
-            paginated_products = Product.query.paginate(
-                page=page,
-                per_page=per_page,
-                error_out=False
-            )
-            schema =ProductSchema(exclude=('variants', 'images'), many=True)
-            return {
-                'products': schema.dump(paginated_products.items),
-                'total': paginated_products.total,
-                'pages': paginated_products.pages,
-                'current_page': paginated_products.page
-            }, None
-        except Exception as e:
-            current_app.logger.error(f'Error fetching products: {str(e)}')
-            return None, {
-                'error': 'Failed to fetch products'
-            }
-    
-    
-    @classmethod
-    def update_product(product_id, data):
-        """_summary_
-
-        Args:
-            product_id (_type_): _description_
-            data (_type_): _description_
-        """
-        try:
-            product = db.session.get(Product, product_id)
+            product = Product.query.get(product_id)
             if not product:
-                return None, {'error': 'Product not found'}
+                return None, "Product not found"
+
+            # Handle basic fields
+            if 'name' in update_data:
+                product.name = update_data['name']
+            if 'slug' in update_data:
+                product.slug = update_data['slug']
+            if 'description' in update_data:
+                product.description = update_data['description']
+            if 'price' in update_data:
+                product.price = update_data['price']
             
-            schema = ProductSchema(partial=True)
-            product_data=schema.load(data)
+            # Handle relationships - ensure they exist first
+            if 'brand_id' in update_data and update_data['brand_id']:
+                from .model import Brand
+                brand = Brand.query.get(update_data['brand_id'])
+                if not brand:
+                    return None, "Brand not found"
+                product.brand_id = update_data['brand_id']
             
-            for field in ['name', 'slug', 'description', 'price', 'category_id', 'brand_id']:
-                if field in product_data:
-                    setattr(product, field, product_data[field])
+            if 'category_id' in update_data and update_data['category_id']:
+                from .model import Category
+                category = Category.query.get(update_data['category_id'])
+                if not category:
+                    return None, "Category not found"
+                product.category_id = update_data['category_id']
             
-            if "variants" in product_data:
-                existing_variants = {v.id: v for v in product.variants}
-                updated_variants = []
-                
-                for variant_data in product_data['variants']:
-                    if 'id' in variant_data and variant_data['id'] in existing_variants:
-                        variant = existing_variants[variant_data['id']]
-                        for field in ['sku', 'color', 'size', 'stock', 'price_override']:
-                            if field in variant_data:
-                                setattr(variant, field, variant_data[field])
-                        updated_variants.append(variant)
-                    else:
-                        variant=ProductVariant(
-                            id=str(uuid4()),
-                            product_id=product.id,
-                            sku = variant_data['sku'],
-                            color = variant_data.get('color'),
-                            size = variant_data.get('size') 
-                        )
-                        updated_variants.append(variant)
-                        
-                for variant in product.variants:
-                    if variant not in updated_variants:
-                        db.session.delete(variant)
-                        
-                product.variants = updated_variants
-                
-                if "images" in product_data:
-                    existing_images = {i.id: i for i in product.images}
-                    updated_images = []
-                    
-                    for image_data in product_data['images']:
-                        if 'id' in image_data and image_data['id'] in existing_images:
-                            image = existing_images[image_data['id']]
-                            for field in ['image_url', 'alt_text']:
-                                if field in image_data:
-                                    setattr(image, field, image_data[field])
-                            updated_images.append(image)
-                        else:
-                            image = ProductImage(
-                                id = str(uuid4()),
-                                product_id = product.id,
-                                image_url = image_data['image_url'],
-                                alt_text = image_data.get('alt_text')
-                            )
-                            updated_images.append(image)
-                    
-                    for image in product.images:
-                        if image not in updated_images:
-                            db.session.delete(image)
-                    
-                    product.images = updated_images 
-                
-                product.updated_at = datetime.utcnow()
-                db.session.commit()
-                return schema.dump(product), None
+            # Update the timestamp
+            product.updated_at = datetime.utcnow()
             
-        except IndentationError as e:
+            db.session.commit()
+            
+            return ProductSchema().dump(product), None
+        except SQLAlchemyError as e:
             db.session.rollback()
-            current_app.logger.error(f"Integrity error updating product: {str(e)}")
-            return None, {
-                "error": 'Database integrity error',
-                "details": 'Possible duplicates slug, SKU, or invalid references'
-            }
-        except Exception as err:
+            return None, f"Database error: {str(e)}"
+        except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error updating product: {str(err)}")
-            return None, {
-                'error': 'Failed to update product',
-                'details': str(err)
-            }
-    
+            return None, str(e)
+
     @staticmethod
     def delete_product(product_id):
-        """_summary_
-
-        Args:
-            product_id (_type_): _description_
-        """
+        """Delete a product"""
         try:
-            product = db.session.get(Product, product_id)
+            product = Product.query.get(product_id)
             if not product:
-                return None, {'error': "Product not found"}
+                return None, "Product not found"
             
             db.session.delete(product)
             db.session.commit()
-            return {"message": 'Product deleted succefully'}, None
-        except Exception as err:
+            return {"message": "Product deleted successfully"}, None
+        except SQLAlchemyError as e:
             db.session.rollback()
-            current_app.logger.error(f'Error deleting product:{str(err)}')
-            return None, {
-                'error': "Failed to delete product",
-                'details': str(err)
-            }
-    
+            return None, str(e)
+
+
     @staticmethod
-    def search_products(query, page=1, per_page=20):
-        """_summary_
-
-        Args:
-            query (_type_): _description_
-            page (int, optional): _description_. Defaults to 1.
-            per_page (int, optional): _description_. Defaults to 20.
-        """
+    def get_products_by_category(category_slug, page=1, per_page=10, min_price=None, 
+                                max_price=None, in_stock=None, search=None):
+        """Get products by category slug with optional filters"""
         try:
-            search = f"%{query}%"
-            paginated_products = Product.query.filter(
-                (Product.name.ilike(search)) |
-                (Product.description.ilike(search))
-            ).paginate(
-                page=page,
-                per_page=per_page,
-                error_out=False
-            )
-            schema =ProductSchema(exclude=('variants','images'), many=True)
-            return {
-                'products': schema.dump(paginated_products.items),
-                'total': paginated_products.total,
-                'pages': paginated_products.pages,
-                'current_page': paginated_products.page
-            }, None 
-        except Exception as err:
-            current_app.logger.error(f'Error searching products: {str(err)}')
-            return None, {
-                'error': 'Failed to search products',
-                'details': str(err)
-            }
-    
+            category = Category.query.filter_by(slug=category_slug).first()
+            if not category:
+                return None, "Category not found"
+
+            query = Product.query.filter_by(category_id=category.id)
+
+            # Apply price filters
+            if min_price is not None:
+                query = query.filter(Product.price >= float(min_price))
+            if max_price is not None:
+                query = query.filter(Product.price <= float(max_price))
+
+            # Convert in_stock to string and check
+            if str(in_stock).lower() == 'true':
+                query = query.join(Product.variants)\
+                            .group_by(Product.id)\
+                            .having(func.sum(ProductVariant.stock) > 0)
+
+            # Search by name or description
+            if search:
+                query = query.filter(
+                    or_(
+                        Product.name.ilike(f"%{search}%"),
+                        Product.description.ilike(f"%{search}%")
+                    )
+                )
+
+            # Paginate result
+            products = query.paginate(page=page, per_page=per_page, error_out=False)
+            schema = ProductSchema(many=True)
+            return schema.dump(products.items), None
+
+        except SQLAlchemyError as e:
+            return None, str(e)
+
+
     @staticmethod
-    def get_products_by_category(category_id, page=1, per_page=20):
-        """_summary_
-
-        Args:
-            category_id (_type_): _description_
-            page (int, optional): _description_. Defaults to 1.
-            per_page (int, optional): _description_. Defaults to 20.
-        """
+    def get_products_by_brand(brand_id, page=1, per_page=10, min_price=None, max_price=None, 
+                            in_stock=None, sort_by='created_at', sort_order='desc'):
+        """Get products by brand ID with filters and sorting"""
         try:
-            paginated_products = Product.query.filter_by(
-                category_id=category_id
-            ).paginate(
-                page=page,
-                per_page=per_page,
-                error_out=False
-            )
-            
-            schema = ProductSchema(exclude=('variants', 'images'), many=True)
-            return {
-                'products': schema.dump(paginated_products.items),
-                'total': paginated_products.total,
-                "pages": paginated_products.pages,
-                "current_page": paginated_products.page 
-            }, None
-        except Exception as err:
-            current_app.logger.error(f'Error fetching products by category: {str(err)}')
-            return None, {
-                'error': 'Failed to fetch products by category',
-                'details': str(err)
-            }
-    
-    @staticmethod 
-    def get_products_by_brand(brand_id, page=1, per_page=20):
-        """_summary_
+            brand = Brand.query.get(brand_id)
+            if not brand:
+                return None, "Brand not found"
 
-        Args:
-            brand_id (_type_): _description_
-            page (int, optional): _description_. Defaults to 1.
-            per_page (int, optional): _description_. Defaults to 20.
-        """
+            query = Product.query.filter_by(brand_id=brand_id)
+
+            # Apply filters
+            if min_price is not None:
+                query = query.filter(Product.price >= min_price)
+            if max_price is not None:
+                query = query.filter(Product.price <= max_price)
+            if in_stock:
+                query = query.join(Product.variants)\
+                            .group_by(Product.id)\
+                            .having(db.func.sum(ProductVariant.stock) > 0)
+
+            # Apply sorting
+            sort_column = getattr(Product, sort_by, None)
+            if sort_column is not None:
+                if sort_order == 'desc':
+                    sort_column = sort_column.desc()
+                query = query.order_by(sort_column)
+            else:
+                # Default sorting if invalid column provided
+                query = query.order_by(Product.created_at.desc())
+
+            products = query.paginate(page=page, per_page=per_page, error_out=False)
+            schema = ProductSchema(many=True)
+            return schema.dump(products.items), None
+        except SQLAlchemyError as e:
+            return None, str(e)
+
+
+    @staticmethod
+    def search_products(search_term, page=1, per_page=10, category_id=None, brand_id=None,
+                       min_price=None, max_price=None, in_stock=None):
+        """Search products with various filters"""
         try:
-            paginated_products = Product.query.filter_by(
-                brand_id=brand_id
-            ).paginate(
-                page=page,
-                per_page=per_page,
-                error_out=False
-            )
-            schema = ProductSchema(exclude=('variants', 'images'), many=True)
-            return {
-                'products': schema.dump(paginated_products.items),
-                'total': paginated_products.total,
-                'pages': paginated_products.pages,
-                'current_page': paginated_products.page 
-            }, None 
-        except Exception as err:
-            current_app.logger.error(f'Error fetching products by brand: {str(err)}')
-            return None, {
-                'error': 'Failed to fetch products by brand',
-                'details': str(err)
-            }
+            query = Product.query
+
+            # Basic search across name and description
+            if search_term:
+                query = query.filter(
+                    or_(
+                        Product.name.ilike(f'%{search_term}%'),
+                        Product.description.ilike(f'%{search_term}%')
+                    )
+                )
+
+            # Additional filters
+            if category_id:
+                query = query.filter_by(category_id=category_id)
+            if brand_id:
+                query = query.filter_by(brand_id=brand_id)
+            if min_price is not None:
+                query = query.filter(Product.price >= min_price)
+            if max_price is not None:
+                query = query.filter(Product.price <= max_price)
+            if in_stock:
+                query = query.join(Product.variants)\
+                            .group_by(Product.id)\
+                            .having(db.func.sum(ProductVariant.stock) > 0)
+
+            # Default sorting by relevance (could be enhanced)
+            query = query.order_by(Product.created_at.desc())
+
+            products = query.paginate(page=page, per_page=per_page, error_out=False)
+            schema = ProductSchema(many=True)
+            return schema.dump(products.items), None
+        except SQLAlchemyError as e:
+            return None, str(e)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
