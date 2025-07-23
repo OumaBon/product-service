@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError,IntegrityError
 from sqlalchemy import or_, func, and_
-from .model import Product, Category, Brand, ProductVariant, db
+from .model import Product, Category, Brand, ProductVariant,ProductImage, db
 from .schema import ProductSchema
 
 
@@ -54,31 +54,73 @@ class ProductService:
             } 
     
     @staticmethod
-    def create_product(product_data):
-        """Create a new product"""
+    def create_product(data):
         try:
             schema = ProductSchema()
-            product = schema.load(product_data, session=db.session)
-            
+            product_data = schema.load(data)
+
+            # Handle or create brand
+            brand = None
+            if "brand" in data:
+                brand = Brand.query.filter_by(name=data["brand"]["name"]).first()
+                if not brand:
+                    brand = Brand(**data["brand"])
+                    db.session.add(brand)
+
+            # Handle or create category
+            category = None
+            if "category" in data:
+                category = Category.query.filter_by(name=data["category"]["name"]).first()
+                if not category:
+                    category = Category(**data["category"])
+                    db.session.add(category)
+
+            # Create product
+            product = Product(
+                name=product_data['name'],
+                slug=product_data['slug'],
+                description=product_data.get('description'),
+                price=product_data['price'],
+                brand=brand,
+                category=category
+            )
             db.session.add(product)
+            db.session.flush()  # Generate product_id
+
+            # Add images (if any)
+            for img in data.get('images', []):
+                image = ProductImage(image_url=img['image_url'], alt_text=img.get('alt_text'), product=product)
+                db.session.add(image)
+
+            # Add variants (if any)
+            for var in data.get('variants', []):
+                variant = ProductVariant(**var, product=product)
+                db.session.add(variant)
+
             db.session.commit()
-            
-            return schema.dump(product), None
-        
+
+            return schema.dump(product), None, 201
+
         except IntegrityError as e:
             db.session.rollback()
-            if "UNIQUE constraint failed: categories.slug" in str(e):
-                return None, "A category with this slug already exists. Please choose a different slug."
-            return None, "Database integrity error occurred. This may be due to duplicate data."
-        
+            return None, {
+                "error": "Integrity error",
+                "message": "Duplicate entry or constraint violation. Check brand/category/product uniqueness."
+            }, 400
+
         except SQLAlchemyError as e:
             db.session.rollback()
-            return None, f"Database error: {str(e)}"
-        
+            return None, {
+                "error": "Database error",
+                "message": "Unexpected database error occurred."
+            }, 500
+
         except Exception as e:
-            db.session.rollback()
-            return None, f"Unexpected error: {str(e)}"
-        
+            return None, {
+                "error": "Unknown error",
+                "message": str(e)
+            }, 500
+    
     @staticmethod
     def get_product_by_id(product_id):
         """Get a single product by ID"""
@@ -229,7 +271,6 @@ class ProductService:
             return schema.dump(products.items), None
         except SQLAlchemyError as e:
             return None, str(e)
-
 
     @staticmethod
     def search_products(search_term, page=1, per_page=10, category_id=None, brand_id=None,
