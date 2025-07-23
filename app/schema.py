@@ -18,7 +18,7 @@ class BrandSchema(SQLAlchemyAutoSchema):
         model = Brand
         load_instance = True
         sqla_session = db.session 
-        exclude = ("products",)  # Avoid circular reference
+        exclude = ("products","id")  # Avoid circular reference
 
     name = auto_field(required=True, validate=validate.Length(max=100))
     description = auto_field(validate=validate.Length(max=500))  # Now nullable=True in model
@@ -29,7 +29,7 @@ class CategorySchema(SQLAlchemyAutoSchema):
         model = Category
         load_instance = True
         sqla_session = db.session 
-        exclude = ("products", "subcategories")  # Avoid circular references
+        exclude = ("products", "subcategories", 'id', 'parent_id')  # Avoid circular references
 
     name = auto_field(required=True, validate=validate.Length(max=100))
     slug = auto_field(required=True, validate=validate.Length(max=100))
@@ -41,7 +41,7 @@ class ProductVariantSchema(SQLAlchemyAutoSchema):
         model = ProductVariant
         load_instance = True
         sqla_session = db.session 
-        exclude = ("product",)  # Avoid circular reference
+        exclude = ("product",'id')  # Avoid circular reference
 
     sku = auto_field(required=True, validate=validate.Length(max=50))
     color = auto_field(validate=validate.Length(max=50))
@@ -55,7 +55,7 @@ class ProductImageSchema(SQLAlchemyAutoSchema):
         model = ProductImage
         load_instance = True
         sqla_session = db.session 
-        exclude = ("product",)  # Avoid circular reference
+        exclude = ("product",'id')  # Avoid circular reference
 
     image_url = auto_field(required=True)
     alt_text = auto_field(validate=validate.Length(max=100))  # Nullable
@@ -70,7 +70,8 @@ class ProductSchema(SQLAlchemyAutoSchema):
         model = Product
         load_instance = True
         sqla_session = db.session 
-        include_fk = True  # Include foreign keys (brand_id, category_id)
+        exclude = ("id",'category_id', 'brand_id')
+        
 
     name = auto_field(required=True, validate=validate.Length(max=100))
     slug = auto_field(required=True, validate=validate.Length(max=100))
