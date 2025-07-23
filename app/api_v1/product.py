@@ -1,59 +1,97 @@
-from flask import jsonify, request 
+from flask import request, jsonify
 from marshmallow import ValidationError
-
-
+from ..import db
+from ..schema import ProductSchema,ProductVariantSchema, ProductImageSchema
+from ..model import Product, Brand, Category, ProductVariant, ProductImage
+import uuid
 
 from . import api
-from ..schema import ProductSchema
-from ..model import Product, Category,Brand
-from .. import db
 
 
-
-@api.route('/product', methods=["POST"])
-def new_product():
+@api.route('/product', methods=['POST'])
+def create_product():
     try:
         data = request.get_json()
-        category =Category.query.filter_by(slug=data.get('category_slug')).first()
-        if not category:
-            return jsonify({"error": "Category not Found"}), 404
+        product_schema = ProductSchema(session=db.session)
         
-        brand = Brand.query.filter_by(name=data.get('brand_name')).first()
-        if not brand:
-            return jsonify({"error": "Brand not found"}), 404
+        # Validate main product data (returns a Product model instance)
+        product_data = product_schema.load(data)
         
-        data['category_id'] = category.id 
-        data['brand_id'] = brand.id 
-        
-        schema = ProductSchema()
-        product = schema.load(data, session=db.session)
-        
+        # Handle brand
+        brand = None
+        if 'brand' in data:
+            brand_data = data['brand']
+            brand = Brand.query.filter_by(name=brand_data['name']).first()
+            if not brand:
+                brand = Brand(
+                    name=brand_data['name'],
+                    description=brand_data.get('description')
+                )
+                db.session.add(brand)
+                db.session.flush()
+
+        # Handle category
+        category = None
+        if 'category' in data:
+            category_data = data['category']
+            category = Category.query.filter_by(name=category_data['name']).first()
+            if not category:
+                category = Category(
+                    name=category_data['name'],
+                    slug=category_data['slug'],
+                    parent_id=category_data.get('parent_id')
+                )
+                db.session.add(category)
+                db.session.flush()
+
+        # Create product (using dot notation)
+        product = Product(
+            name=product_data.name,      # ✅ Fixed: Using dot notation
+            slug=product_data.slug,
+            description=product_data.description,
+            price=product_data.price,
+            brand_id=brand.id if brand else None,
+            category_id=category.id if category else None
+        )
         db.session.add(product)
+        db.session.flush()
+
+        # Handle variants with SKU validation
+        if 'variants' in data:
+            for variant_data in data['variants']:
+                if ProductVariant.query.filter_by(sku=variant_data['sku']).first():
+                    db.session.rollback()
+                    return jsonify({
+                        "error": "Duplicate SKU",
+                        "message": f"SKU {variant_data['sku']} already exists"
+                    }), 400
+                
+                variant = ProductVariant(
+                    product_id=product.id,
+                    sku=variant_data['sku'],
+                    color=variant_data['color'],
+                    size=variant_data['size'],
+                    stock=variant_data['stock'],
+                    price_override=variant_data.get('price_override')
+                )
+                db.session.add(variant)
+
+        # Handle images
+        if 'images' in data:
+            for image_data in data['images']:
+                image = ProductImage(
+                    product_id=product.id,
+                    image_url=image_data['image_url'],
+                    alt_text=image_data.get('alt_text')
+                )
+                db.session.add(image)
+
         db.session.commit()
-        
-        return jsonify(schema.dump(product)), 201
+        return product_schema.dump(product), 201
+
     except ValidationError as err:
-        return jsonify({"errors": err.messages}), 400
-    
+        db.session.rollback()
+        return jsonify({"error": "Validation error", "details": err.messages}), 400
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-
-
-
-@api.route('/product', methods=["GET"])
-def get_products():
-    schema = ProductSchema(many=True)
-    products = Product.query.all()
-    result = schema.dump(products)
-    return jsonify({"products": result}), 200
-
-
-
-
-@api.route('/product/<id>', methods=["GET"])
-def get_product(id):
-    schema = ProductSchema()
-    product = Product.query.get_or_404(id)
-    result = schema.dump(product)
-    return jsonify({"product": result}), 200
+        db.session.rollback()
+        return jsonify({"error": "Server error", "message": str(e)}), 500
