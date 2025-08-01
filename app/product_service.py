@@ -53,6 +53,74 @@ class ProductService:
                 "message": str(e)
             } 
     
+    # @staticmethod
+    # def create_product(data):
+    #     try:
+    #         schema = ProductSchema()
+    #         product_data = schema.load(data)
+
+    #         # Handle or create brand
+    #         brand = None
+    #         if "brand" in data:
+    #             brand = Brand.query.filter_by(name=data["brand"]["name"]).first()
+    #             if not brand:
+    #                 brand = Brand(**data["brand"])
+    #                 db.session.add(brand)
+
+    #         # Handle or create category
+    #         category = None
+    #         if "category" in data:
+    #             category = Category.query.filter_by(name=data["category"]["name"]).first()
+    #             if not category:
+    #                 category = Category(**data["category"])
+    #                 db.session.add(category)
+
+    #         # Create product
+    #         product = Product(
+    #             name=product_data['name'],
+    #             slug=product_data['slug'],
+    #             description=product_data.get('description'),
+    #             price=product_data['price'],
+    #             brand=brand,
+    #             category=category
+    #         )
+    #         db.session.add(product)
+    #         db.session.flush()  # Generate product_id
+
+    #         # Add images (if any)
+    #         for img in data.get('images', []):
+    #             image = ProductImage(image_url=img['image_url'], alt_text=img.get('alt_text'), product=product)
+    #             db.session.add(image)
+
+    #         # Add variants (if any)
+    #         for var in data.get('variants', []):
+    #             variant = ProductVariant(**var, product=product)
+    #             db.session.add(variant)
+
+    #         db.session.commit()
+
+    #         return schema.dump(product), None, 201
+
+    #     except IntegrityError as e:
+    #         db.session.rollback()
+    #         return None, {
+    #             "error": "Integrity error",
+    #             "message": "Duplicate entry or constraint violation. Check brand/category/product uniqueness."
+    #         }, 400
+
+    #     except SQLAlchemyError as e:
+    #         db.session.rollback()
+    #         return None, {
+    #             "error": "Database error",
+    #             "message": "Unexpected database error occurred."
+    #         }, 500
+
+    #     except Exception as e:
+    #         return None, {
+    #             "error": "Unknown error",
+    #             "message": str(e)
+    #         }, 500
+    
     @staticmethod
     def create_product(data):
         try:
@@ -62,25 +130,27 @@ class ProductService:
             # Handle or create brand
             brand = None
             if "brand" in data:
-                brand = Brand.query.filter_by(name=data["brand"]["name"]).first()
+                brand_data = data["brand"]
+                brand = Brand.query.filter_by(name=brand_data.get("name")).first()
                 if not brand:
-                    brand = Brand(**data["brand"])
+                    brand = Brand(**brand_data)
                     db.session.add(brand)
 
             # Handle or create category
             category = None
             if "category" in data:
-                category = Category.query.filter_by(name=data["category"]["name"]).first()
+                category_data = data["category"]
+                category = Category.query.filter_by(name=category_data.get("name")).first()
                 if not category:
-                    category = Category(**data["category"])
+                    category = Category(**category_data)
                     db.session.add(category)
 
-            # Create product
+            # Create product (use attribute access instead of dict access)
             product = Product(
-                name=product_data['name'],
-                slug=product_data['slug'],
-                description=product_data.get('description'),
-                price=product_data['price'],
+                name=product_data.name,
+                slug=product_data.slug,
+                description=getattr(product_data, 'description', None),
+                price=product_data.price,
                 brand=brand,
                 category=category
             )
@@ -89,12 +159,16 @@ class ProductService:
 
             # Add images (if any)
             for img in data.get('images', []):
-                image = ProductImage(image_url=img['image_url'], alt_text=img.get('alt_text'), product=product)
+                image = ProductImage(
+                    image_url=img.get('image_url'),
+                    alt_text=img.get('alt_text'),
+                    product=product
+                )
                 db.session.add(image)
 
             # Add variants (if any)
             for var in data.get('variants', []):
-                variant = ProductVariant(**var, product=product)
+                variant = ProductVariant(product=product, **var)
                 db.session.add(variant)
 
             db.session.commit()
@@ -120,6 +194,7 @@ class ProductService:
                 "error": "Unknown error",
                 "message": str(e)
             }, 500
+
     
     @staticmethod
     def get_product_by_id(product_id):
